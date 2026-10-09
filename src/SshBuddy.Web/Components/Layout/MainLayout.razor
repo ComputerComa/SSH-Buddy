@@ -1,0 +1,30 @@
+@inherits LayoutComponentBase
+
+<nav class="navbar navbar-expand navbar-dark bg-dark mb-4">
+    <div class="container">
+        <a class="navbar-brand" href="/">SSH Buddy</a>
+        <AuthorizeView>
+            <Authorized>
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item"><NavLink class="nav-link" href="keys">Keys</NavLink></li>
+                    <li class="nav-item"><NavLink class="nav-link" href="enroll">Enroll</NavLink></li>
+                    <li class="nav-item"><NavLink class="nav-link" href="audit">Audit</NavLink></li>
+                </ul>
+                <form method="post" action="/account/logout" data-enhance="false">
+                    <AntiforgeryToken />
+                    <button type="submit" class="btn btn-outline-light btn-sm">Sign out</button>
+                </form>
+            </Authorized>
+        </AuthorizeView>
+    </div>
+</nav>
+
+<main class="container pb-5">
+    @Body
+</main>
+
+<div id="blazor-error-ui" data-nosnippet>
+    An unhandled error has occurred.
+    <a href="." class="reload">Reload</a>
+    <span class="dismiss">🗙</span>
+</div>

@@ -1,0 +1,19 @@
+[Unit]
+Description=SSH Buddy (central authorized_keys management)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=ssh-buddy
+Group=ssh-buddy
+WorkingDirectory=/opt/ssh-buddy
+EnvironmentFile=/etc/ssh-buddy/ssh-buddy.env
+# Apply any pending EF Core migrations before every start (idempotent).
+ExecStartPre=/opt/ssh-buddy/SshBuddy.Web migrate
+ExecStart=/opt/ssh-buddy/SshBuddy.Web
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

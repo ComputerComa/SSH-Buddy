@@ -1,0 +1,40 @@
+@inject KeyService Keys
+@inject AuthenticationStateProvider Auth
+
+<EditForm Model="model" OnValidSubmit="SubmitAsync" FormName="add-key">
+    <div class="row g-2 align-items-start">
+        <div class="col-md-3">
+            <label class="form-label" for="label">Device label</label>
+            <InputText id="label" class="form-control" @bind-Value="model.Label" maxlength="@KeyLabel.MaxLength" />
+        </div>
+        <div class="col-md-7">
+            <label class="form-label" for="pubkey">Public key</label>
+            <InputTextArea id="pubkey" class="form-control font-monospace" rows="3" @bind-Value="model.PublicKey"
+                           placeholder="ssh-ed25519 AAAA… comment" />
+        </div>
+        <div class="col-md-2 pt-md-4">
+            <button type="submit" class="btn btn-primary w-100 mt-md-2">Add key</button>
+        </div>
+    </div>
+    <AlertMessage Message="error" />
+</EditForm>
+
+@code {
+    private sealed class Model { public string Label { get; set; } = ""; public string PublicKey { get; set; } = ""; }
+    private readonly Model model = new();
+    private string? error;
+
+    [Parameter] public EventCallback OnAdded { get; set; }
+
+    private async Task SubmitAsync()
+    {
+        var user = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "admin";
+        var result = await Keys.AddAsync(model.Label, model.PublicKey, user);
+        error = result.Succeeded ? null : result.Error;
+        if (result.Succeeded)
+        {
+            model.Label = model.PublicKey = "";
+            await OnAdded.InvokeAsync();
+        }
+    }
+}

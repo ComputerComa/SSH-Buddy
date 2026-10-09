@@ -1,0 +1,38 @@
+<div class="table-responsive">
+    <table class="table table-hover align-middle">
+        <thead>
+            <tr><th>Device</th><th>Algorithm</th><th>SHA256 fingerprint</th><th>Created (UTC)</th><th>Status</th><th></th></tr>
+        </thead>
+        <tbody>
+            @foreach (var k in Keys)
+            {
+                <tr class="@(k.IsActive ? null : "text-muted")">
+                    <td>@k.Label</td>
+                    <td>@k.Algorithm</td>
+                    <td class="font-monospace small text-break">@k.Fingerprint</td>
+                    <td>@k.CreatedUtc.ToString("yyyy-MM-dd HH:mm")</td>
+                    <td><StatusBadge Active="k.IsActive" /></td>
+                    <td class="text-end">
+                        @if (k.IsActive)
+                        {
+                            <button class="btn btn-sm btn-outline-danger" @onclick="() => OnToggle.InvokeAsync(k)">Revoke</button>
+                        }
+                        else
+                        {
+                            <button class="btn btn-sm btn-outline-success" @onclick="() => OnToggle.InvokeAsync(k)">Reactivate</button>
+                        }
+                    </td>
+                </tr>
+            }
+            @if (Keys.Count == 0)
+            {
+                <tr><td colspan="6" class="text-center text-muted py-4">No keys yet.</td></tr>
+            }
+        </tbody>
+    </table>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<SshKey> Keys { get; set; } = [];
+    [Parameter] public EventCallback<SshKey> OnToggle { get; set; }
+}

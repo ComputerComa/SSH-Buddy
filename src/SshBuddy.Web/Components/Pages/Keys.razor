@@ -1,0 +1,41 @@
+@page "/"
+@page "/keys"
+@rendermode InteractiveServer
+@attribute [Authorize]
+@inject KeyService KeySvc
+@inject AuthenticationStateProvider Auth
+
+<PageTitle>Keys · SSH Buddy</PageTitle>
+<PageHeader Title="Approved SSH keys">
+    <a class="btn btn-outline-secondary" href="enroll">Enroll a device</a>
+</PageHeader>
+
+<div class="card card-body mb-4">
+    <AddKeyForm OnAdded="LoadAsync" />
+</div>
+
+<AlertMessage Message="error" />
+@if (keys is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    <KeyTable Keys="keys" OnToggle="ToggleAsync" />
+}
+
+@code {
+    private List<SshKey>? keys;
+    private string? error;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync() => keys = await KeySvc.ListAsync();
+
+    private async Task ToggleAsync(SshKey key)
+    {
+        var user = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "admin";
+        error = await KeySvc.SetRevokedAsync(key.Id, revoked: key.IsActive, user) ? null : "That key no longer exists.";
+        await LoadAsync();
+    }
+}

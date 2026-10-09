@@ -1,0 +1,44 @@
+@page "/enroll"
+@rendermode InteractiveServer
+@attribute [Authorize]
+@inject EnrollmentService Enrollment
+@inject AuthenticationStateProvider Auth
+@inject NavigationManager Nav
+@inject IConfiguration Config
+
+<PageTitle>Enroll · SSH Buddy</PageTitle>
+<PageHeader Title="Enroll a device" />
+
+<p>
+    Generate a single-use token, then run the command on the device that owns the key.
+    It uploads <code>~/.ssh/id_ed25519.pub</code> (edit the path for another key) and the token is consumed only if the key is accepted.
+</p>
+<button class="btn btn-primary mb-4" @onclick="GenerateAsync">Generate enrollment token</button>
+
+@if (command is not null)
+{
+    <div class="alert alert-info">
+        Expires at <strong>@expires.ToString("yyyy-MM-dd HH:mm:ss") UTC</strong> (in @minutes minutes). Single use.
+        This token is shown once and cannot be recovered; generate a new one if you lose it.
+    </div>
+    <CopyBox Label="Command" Value="@command" Rows="4" />
+    <p class="small text-muted">
+        The token is visible in the process list and shell history on the enrolling device; that is acceptable because it is short-lived and single-use.
+    </p>
+}
+
+@code {
+    private string? command;
+    private DateTime expires;
+    private int minutes;
+
+    private async Task GenerateAsync()
+    {
+        var user = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "admin";
+        var created = await Enrollment.CreateTokenAsync(user);
+        var baseUrl = Config["App:PublicBaseUrl"] is { Length: > 0 } configured ? configured : Nav.BaseUri;
+        command = EnrollmentCommand.Build(baseUrl, created.Token);
+        expires = created.ExpiresUtc;
+        minutes = (int)Math.Ceiling((created.ExpiresUtc - DateTime.UtcNow).TotalMinutes);
+    }
+}

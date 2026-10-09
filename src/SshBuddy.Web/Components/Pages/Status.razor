@@ -1,0 +1,19 @@
+@page "/status/{Code:int}"
+@attribute [AllowAnonymous]
+
+<PageTitle>Error · SSH Buddy</PageTitle>
+<h1 class="h3">@Heading</h1>
+<p><a href="/">Back to the key list</a></p>
+
+@code {
+    [Parameter] public int Code { get; set; }
+
+    private string Heading => Code switch
+    {
+        404 => "Not found",
+        403 => "Forbidden",
+        429 => "Too many requests. Wait a minute and try again.",
+        400 => "Bad request (your form may have expired; reload and retry)",
+        _ => $"Something went wrong ({Code})",
+    };
+}

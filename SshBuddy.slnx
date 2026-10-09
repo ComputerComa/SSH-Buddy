@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/SshBuddy.Web/SshBuddy.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/SshBuddy.Tests/SshBuddy.Tests.csproj" />
+  </Folder>
+</Solution>

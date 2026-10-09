@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodically sync SSH authorized keys from SSH Buddy
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=15min
+RandomizedDelaySec=2min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

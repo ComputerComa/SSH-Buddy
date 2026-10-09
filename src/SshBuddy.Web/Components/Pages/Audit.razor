@@ -1,0 +1,36 @@
+@page "/audit"
+@rendermode InteractiveServer
+@attribute [Authorize]
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<AppDbContext> DbFactory
+
+<PageTitle>Audit · SSH Buddy</PageTitle>
+<PageHeader Title="Audit trail" />
+
+<div class="table-responsive">
+    <table class="table table-sm align-middle">
+        <thead><tr><th>Time (UTC)</th><th>Action</th><th>Actor</th><th>Detail</th></tr></thead>
+        <tbody>
+            @foreach (var e in events)
+            {
+                <tr>
+                    <td class="text-nowrap">@e.TimestampUtc.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                    <td>@e.Action</td>
+                    <td>@e.Actor</td>
+                    <td class="text-break">@e.Detail</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+</div>
+<p class="small text-muted">Showing the most recent 200 events.</p>
+
+@code {
+    private List<AuditEvent> events = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        events = await db.AuditEvents.AsNoTracking().OrderByDescending(e => e.Id).Take(200).ToListAsync();
+    }
+}

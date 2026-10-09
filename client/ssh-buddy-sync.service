@@ -1,0 +1,11 @@
+[Unit]
+Description=Sync SSH authorized keys from SSH Buddy
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/ssh-buddy/client.env
+ExecStart=/usr/local/sbin/ssh-buddy-sync
+TimeoutStartSec=120
+NoNewPrivileges=yes

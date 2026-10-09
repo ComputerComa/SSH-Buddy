@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Pull the global authorized_keys list from SSH Buddy and atomically install it.
+# Runs as root. The target is only ever replaced by a fully validated payload.
+set -euo pipefail
+umask 022
+
+URL="${SSH_BUDDY_URL:?SSH_BUDDY_URL is not set (see /etc/ssh-buddy/client.env)}"
+TARGET="${SSH_BUDDY_TARGET:-/etc/ssh/authorized_keys.d/root-managed}"
+OWNER="${SSH_BUDDY_OWNER:-root:root}"
+MAX_BYTES="${SSH_BUDDY_MAX_BYTES:-1048576}"
+
+# One line per key: <algorithm> <base64 blob> [comment without spaces]. No options, no certificates.
+LINE_RE='^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com) [A-Za-z0-9+/]{32,}={0,2}( [!-~]+)?$'
+
+log() { echo "ssh-buddy-sync: $*"; }
+die() { echo "ssh-buddy-sync: ERROR: $*" >&2; exit 1; }
+
+case "$URL" in
+  https://*) ;;
+  *) die "SSH_BUDDY_URL must start with https://" ;;
+esac
+
+dir="$(dirname "$TARGET")"
+[ -d "$dir" ] || mkdir -p "$dir"
+
+# Stage in the target's directory so the final rename is atomic (same filesystem).
+tmp="$(mktemp "$dir/.root-managed.XXXXXX")"
+trap 'rm -f "$tmp"' EXIT
+
+if ! code="$(curl --silent --show-error \
+      --proto '=https' --tlsv1.2 \
+      --connect-timeout 10 --max-time 30 --max-filesize "$MAX_BYTES" \
+      --retry 2 --retry-delay 3 \
+      --user-agent ssh-buddy-sync \
+      --output "$tmp" --write-out '%{http_code}' \
+      "$URL")"; then
+  die "request failed; keeping existing $TARGET"
+fi
+[ "$code" = "200" ] || die "server answered HTTP $code; keeping existing $TARGET"
+
+size="$(wc -c < "$tmp")"
+[ "$size" -le "$MAX_BYTES" ] || die "response too large; keeping existing $TARGET"
+
+if [ "$size" -gt 0 ]; then
+  [ "$(tail -c 1 "$tmp" | od -An -tx1 | tr -d ' \n')" = "0a" ] \
+    || die "payload does not end with a newline; keeping existing $TARGET"
+  # grep -v succeeds when ANY line fails the pattern. -a keeps NUL bytes from hiding bad lines.
+  if LC_ALL=C grep -aqvE "$LINE_RE" "$tmp"; then
+    die "payload contains malformed lines; keeping existing $TARGET"
+  fi
+fi
+
+if [ -f "$TARGET" ] && cmp -s "$tmp" "$TARGET"; then
+  log "no change ($(wc -l < "$tmp") keys)"
+  exit 0
+fi
+
+chown "$OWNER" "$tmp"
+chmod 0644 "$tmp"
+sync "$tmp"
+mv -f "$tmp" "$TARGET"
+log "updated $TARGET ($(wc -l < "$TARGET") keys)"
