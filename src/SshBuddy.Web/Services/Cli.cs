@@ -12,7 +12,7 @@ public static class Cli
     public static async Task<int> RunAsync(string[] args)
     {
         var builder = WebApplication.CreateBuilder([]);
-        builder.Logging.SetMinimumLevel(LogLevel.Warning);
+        builder.Logging.AddFilter("Microsoft", LogLevel.Warning); // more specific than the config "Default" rule, which would otherwise print every EF command
         builder.Services.AddSshBuddyCore(builder.Configuration, builder.Environment);
         await using var app = builder.Build();
         await using var scope = app.Services.CreateAsyncScope();

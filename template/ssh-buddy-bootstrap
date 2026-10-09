@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# First-boot bootstrap for a container cloned from the SSH Buddy template.
+#
+#   wait for the API  ->  download the Go agent  ->  verify  ->  install atomically
+#   ->  `agent install` (sshd drop-in + units)  ->  first sync + registration (as the systemd unit)
+#   ->  enable the timer  ->  write the completion marker
+#
+# Idempotent: safe to re-run; the marker is only written after everything above succeeded. Nothing here is
+# per-machine: the template contains the URL and the shared enrollment credential, never state or a marker.
+set -euo pipefail
+umask 022
+
+CONF="${SSH_BUDDY_CONF:-/etc/ssh-buddy/agent.conf}"
+TOKEN_FILE="${SSH_BUDDY_TOKEN_FILE:-/etc/ssh-buddy/enroll-token}"
+STATE_DIR="${SSH_BUDDY_STATE_DIR:-/var/lib/ssh-buddy-agent}"
+MARKER="$STATE_DIR/bootstrap-complete"
+BIN="${SSH_BUDDY_BIN:-/usr/local/sbin/ssh-buddy-agent}"
+# How long to keep retrying for the API (network-online.target does not guarantee the server is reachable).
+WINDOW="${SSH_BUDDY_BOOTSTRAP_WINDOW:-150}"
+
+log() { echo "ssh-buddy-bootstrap: $*"; }
+die() { echo "ssh-buddy-bootstrap: ERROR: $*" >&2; exit 1; }
+
+[ -e "$MARKER" ] && { log "already complete"; exit 0; }
+[ "$(id -u)" -eq 0 ] || die "must run as root"
+
+[ -r "$CONF" ] || die "missing $CONF"
+BASE_URL="$(sed -n 's/^[[:space:]]*url[[:space:]]*=[[:space:]]*//p' "$CONF" | head -n1 | sed 's/[[:space:]]*$//; s#/*$##')"
+case "$BASE_URL" in https://*) ;; *) die "url in $CONF must start with https://" ;; esac
+case "$BASE_URL" in *[[:space:]]*|*\?*|*\#*|*@*) die "url in $CONF must be a plain https origin" ;; esac
+
+[ -s "$TOKEN_FILE" ] || die "missing enrollment credential $TOKEN_FILE"
+if [ -n "$(find "$TOKEN_FILE" -perm /077 2>/dev/null)" ]; then
+  log "WARNING: $TOKEN_FILE is readable by other users; fixing to mode 0600"
+  chmod 0600 "$TOKEN_FILE"
+fi
+
+case "$(uname -m)" in
+  x86_64)  PLATFORM=linux-amd64 ;;
+  aarch64) PLATFORM=linux-arm64 ;;
+  *) die "unsupported architecture $(uname -m) (supported: x86_64, aarch64)" ;;
+esac
+
+work="$(mktemp -d /var/tmp/ssh-buddy-bootstrap.XXXXXX)"
+trap 'rm -rf "$work"' EXIT
+
+fetch() { # fetch URL-PATH OUTPUT [MAX-BYTES]
+  curl --fail --silent --show-error --proto '=https' --tlsv1.2 \
+       --connect-timeout 10 --max-time 120 --max-filesize "${3:-1048576}" \
+       --output "$2" "$BASE_URL$1"
+}
+
+# ---- 1. wait for the API: retry real requests with a growing delay, bounded so the unit cannot hang forever
+deadline=$(( $(date +%s) + WINDOW )); delay=3
+until fetch /api/agent/manifest.txt "$work/manifest.txt"; do
+  [ "$(date +%s)" -lt "$deadline" ] || die "SSH Buddy API at $BASE_URL not reachable after ${WINDOW}s (the unit will be retried)"
+  log "API not reachable yet; retrying in ${delay}s"
+  sleep "$delay"; [ "$delay" -lt 20 ] && delay=$(( delay + 3 ))
+done
+
+# ---- 2. pick this machine's binary from the manifest: "version platform size sha256 path"
+read -r version _ size sha path < <(awk -v p="$PLATFORM" '$2 == p { print; exit }' "$work/manifest.txt") || true
+[ -n "${version:-}" ] || die "manifest has no entry for $PLATFORM"
+[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || die "bad version in manifest"
+[[ "$size" =~ ^[0-9]+$ ]] && [ "$size" -gt 0 ] && [ "$size" -le 67108864 ] || die "bad size in manifest"
+[[ "$sha" =~ ^[0-9a-f]{64}$ ]] || die "bad checksum in manifest"
+[[ "$path" =~ ^/api/agent/download/[0-9A-Za-z.-]+/linux-(amd64|arm64)$ ]] || die "bad download path in manifest"
+
+# ---- 3. download + verify + atomically install (a failure leaves any existing working binary in place)
+installed_sha=""
+[ -x "$BIN" ] && installed_sha="$(sha256sum "$BIN" | cut -d' ' -f1)"
+if [ "$installed_sha" = "$sha" ]; then
+  log "agent $version already installed"
+else
+  log "downloading agent $version ($PLATFORM)"
+  fetch "$path" "$work/agent" "$size" || die "download failed; keeping existing agent"
+  [ "$(stat -c %s "$work/agent")" -eq "$size" ] || die "downloaded size does not match the manifest"
+  [ "$(sha256sum "$work/agent" | cut -d' ' -f1)" = "$sha" ] || die "checksum mismatch; refusing to install"
+  chmod 0755 "$work/agent"
+  "$work/agent" version >/dev/null || die "downloaded agent does not run on this machine"
+  install -d -m 0755 "$(dirname "$BIN")"
+  install -m 0755 "$work/agent" "$BIN.new"
+  mv -f "$BIN.new" "$BIN"
+  log "installed $BIN"
+fi
+
+# ---- 4. sshd drop-in + systemd units (transactional; fails the bootstrap if sshd would not honour the managed file)
+# Templates should not ship SSH host keys; `sshd -T` (used to verify the effective config) needs them, so make sure they exist.
+ssh-keygen -A >/dev/null 2>&1 || true
+"$BIN" install --config "$CONF" || die "agent install failed (sshd/systemd configuration was rolled back)"
+
+# ---- 5. first sync + registration, run as the real unit so the environment matches periodic runs.
+# The unit fails on ANY non-zero agent exit (1 = key sync, 3 = registration/report, 4 = busy), so a refused
+# registration cannot be mistaken for success. The end state is also checked on disk instead of trusting
+# systemd's exit-status bookkeeping.
+log "running the first sync"
+systemctl start ssh-buddy-agent.service || die "first sync/registration did not succeed (see: journalctl -u ssh-buddy-agent); will retry"
+[ -s "$STATE_DIR/machine-credential" ] || die "the machine has no credential yet: registration did not complete; will retry"
+grep -q '"first_sync_ok":true' "$STATE_DIR/state.json" 2>/dev/null || die "no successful key sync is recorded; will retry"
+
+# ---- 6. periodic runs, then done
+systemctl enable --now ssh-buddy-agent.timer
+install -d -m 0700 "$STATE_DIR"
+date -u +%FT%TZ > "$MARKER.tmp"
+mv -f "$MARKER.tmp" "$MARKER"
+log "complete"

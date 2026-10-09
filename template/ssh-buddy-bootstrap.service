@@ -1,0 +1,22 @@
+[Unit]
+Description=SSH Buddy first-boot bootstrap (download agent, enroll, first sync)
+Documentation=file:///usr/share/doc/ssh-buddy/template.md
+Wants=network-online.target
+After=network-online.target
+# The marker lives in /var/lib and is created only after a fully successful bootstrap; it is never baked into the template.
+ConditionPathExists=!/var/lib/ssh-buddy-agent/bootstrap-complete
+ConditionPathExists=/etc/ssh-buddy/agent.conf
+
+[Service]
+# Type=exec: the start job is finished as soon as the script is running, so multi-user.target (and every other
+# service) does not wait for the network or the SSH Buddy server. The script keeps working in the background;
+# RemainAfterExit keeps the unit "active (exited)" after success.
+Type=exec
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/ssh-buddy-bootstrap
+# The script retries the API for ~150s itself, then fails; systemd starts it again after RestartSec.
+Restart=on-failure
+RestartSec=60
+
+[Install]
+WantedBy=multi-user.target

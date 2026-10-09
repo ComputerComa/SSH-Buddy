@@ -1,0 +1,62 @@
+<div class="table-responsive">
+    <table class="table table-hover align-middle">
+        <thead>
+            <tr>
+                <th>Machine</th><th>Status</th><th>Last contact</th><th>Last successful sync</th>
+                <th>IP</th><th>Agent</th><th>Key-list revision</th><th></th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var v in Machines)
+            {
+                var m = v.Machine;
+                <tr class="@(v.Status == MachineStatus.Revoked ? "text-muted" : null)">
+                    <td>
+                        <div class="fw-semibold">@m.Fqdn</div>
+                        <div class="small text-muted">first seen <RelativeTime Value="m.FirstRegisteredUtc" /></div>
+                    </td>
+                    <td>
+                        <MachineStatusBadge Status="v.Status" Detail="@v.StatusDetail" />
+                        @if (v.ReenrollRequested)
+                        {
+                            <div class="small text-warning-emphasis mt-1">Re-enrollment requested <RelativeTime Value="m.LastRefusedEnrollUtc" /> from @m.LastRefusedEnrollIp</div>
+                        }
+                        @if (v.PermitActive)
+                        {
+                            <div class="small text-info-emphasis mt-1">Re-enrollment permitted until @m.ReenrollPermittedUntilUtc!.Value.ToString("HH:mm") UTC</div>
+                        }
+                        @if (v.Status is MachineStatus.SyncError)
+                        {
+                            <div class="small text-danger text-break mt-1">@v.StatusDetail</div>
+                        }
+                    </td>
+                    <td><RelativeTime Value="m.LastContactUtc" /></td>
+                    <td><RelativeTime Value="m.LastSuccessUtc" /></td>
+                    <td class="font-monospace small">@(m.LastIp ?? "—")</td>
+                    <td>@(m.AgentVersion ?? "—")</td>
+                    <td class="font-monospace small" title="@m.AppliedEtag">@Short(m.AppliedEtag)</td>
+                    <td class="text-end text-nowrap">
+                        @if (v.Status != MachineStatus.Revoked)
+                        {
+                            <button class="btn btn-sm btn-outline-danger" @onclick="() => OnRemove.InvokeAsync(m)">Remove…</button>
+                        }
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="() => OnPermit.InvokeAsync(m)">Permit re-enrollment</button>
+                    </td>
+                </tr>
+            }
+            @if (Machines.Count == 0)
+            {
+                <tr><td colspan="8" class="text-center text-muted py-4">No machines have registered yet.</td></tr>
+            }
+        </tbody>
+    </table>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<MachineView> Machines { get; set; } = [];
+    [Parameter] public EventCallback<Machine> OnRemove { get; set; }
+    [Parameter] public EventCallback<Machine> OnPermit { get; set; }
+
+    private static string Short(string? etag) =>
+        string.IsNullOrEmpty(etag) ? "—" : etag.Trim('"')[..Math.Min(12, etag.Trim('"').Length)];
+}

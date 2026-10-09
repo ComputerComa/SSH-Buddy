@@ -1,0 +1,23 @@
+@if (Value is null)
+{
+    <span class="text-muted">never</span>
+}
+else
+{
+    <span title="@Value.Value.ToString("yyyy-MM-dd HH:mm:ss") UTC">@Ago(Value.Value)</span>
+}
+
+@code {
+    [Parameter] public DateTime? Value { get; set; }
+    [Inject] private TimeProvider Time { get; set; } = default!;
+
+    private string Ago(DateTime utc)
+    {
+        var d = Time.GetUtcNow().UtcDateTime - utc;
+        if (d < TimeSpan.Zero) d = TimeSpan.Zero;
+        if (d.TotalMinutes < 1) return "just now";
+        if (d.TotalHours < 1) return $"{(int)d.TotalMinutes} min ago";
+        if (d.TotalDays < 1) return $"{(int)d.TotalHours} h ago";
+        return $"{(int)d.TotalDays} d ago";
+    }
+}

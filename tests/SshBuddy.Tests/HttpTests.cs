@@ -60,6 +60,15 @@ public sealed class DistributionAndAuthorizationTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.NotModified, (await _c.SendAsync(any)).StatusCode);
     }
 
+    [Fact]
+    public async Task Head_on_the_key_list_works_like_get_without_a_body()
+    {
+        var res = await _c.SendAsync(new HttpRequestMessage(HttpMethod.Head, "/api/authorized-keys"));
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+        Assert.NotNull(res.Headers.ETag);
+        Assert.Empty(await res.Content.ReadAsStringAsync());
+    }
+
     [Theory]
     [InlineData("/")]
     [InlineData("/keys")]

@@ -1,0 +1,8 @@
+# Debian 13 with systemd as PID 1, sshd, curl and sqlite3: stands in for an LXC container in the integration run.
+FROM debian:trixie
+ENV DEBIAN_FRONTEND=noninteractive container=docker
+RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends systemd systemd-sysv dbus openssh-server curl ca-certificates iproute2 procps sqlite3 \
+ && rm -rf /var/lib/apt/lists/* \
+ && systemctl mask getty.target console-getty.service systemd-logind.service systemd-udevd.service systemd-networkd.service systemd-resolved.service systemd-timesyncd.service
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]

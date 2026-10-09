@@ -1,0 +1,86 @@
+@page "/machines"
+@rendermode InteractiveServer
+@attribute [Authorize]
+@inject MachineService Svc
+@inject AuthenticationStateProvider Auth
+@inject Microsoft.Extensions.Options.IOptions<MachineOptions> Options
+
+<PageTitle>Machines · SSH Buddy</PageTitle>
+<PageHeader Title="Machines">
+    <a class="btn btn-outline-secondary" href="templates">Template credentials</a>
+</PageHeader>
+
+@if (views is not null)
+{
+    <div class="row g-3 mb-4">
+        <div class="col-6 col-md-3"><div class="card card-body"><div class="small text-muted">Healthy</div><div class="fs-3" id="count-healthy">@Count(MachineStatus.Healthy)</div></div></div>
+        <div class="col-6 col-md-3"><div class="card card-body"><div class="small text-muted">Sync error</div><div class="fs-3" id="count-error">@Count(MachineStatus.SyncError)</div></div></div>
+        <div class="col-6 col-md-3"><div class="card card-body"><div class="small text-muted">Stale (> @Options.Value.StaleAfterDays days)</div><div class="fs-3" id="count-stale">@Count(MachineStatus.Stale)</div></div></div>
+        <div class="col-6 col-md-3"><div class="card card-body"><div class="small text-muted">Removed</div><div class="fs-3" id="count-revoked">@Count(MachineStatus.Revoked)</div></div></div>
+    </div>
+}
+
+<AlertMessage Message="@info" Kind="success" />
+<AlertMessage Message="@error" />
+
+@if (removing is not null)
+{
+    <div class="alert alert-warning" role="alert" id="remove-confirm">
+        <h2 class="h5">Remove @removing.Fqdn?</h2>
+        <p class="mb-2">
+            This <strong>disables this machine's reporting credential</strong> and stops it appearing in the active list.
+            It does <strong>not</strong> revoke any SSH keys, and it does <strong>not</strong> remove keys that are already
+            present in <code>/etc/ssh/authorized_keys.d/root-managed</code> on the machine: its sync will keep working because the key list is public.
+            The hostname is remembered, so this installation cannot silently re-enroll; use “Permit re-enrollment” to allow a rebuilt machine back in.
+        </p>
+        <button class="btn btn-danger btn-sm me-2" id="remove-confirm-yes" @onclick="ConfirmRemoveAsync">Remove machine</button>
+        <button class="btn btn-outline-secondary btn-sm" @onclick="() => removing = null">Cancel</button>
+    </div>
+}
+
+@if (views is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    <div class="form-check form-switch mb-2">
+        <input class="form-check-input" type="checkbox" id="show-removed" @bind="showRemoved" />
+        <label class="form-check-label" for="show-removed">Show removed machines</label>
+    </div>
+    <MachineTable Machines="Shown" OnRemove="m => { removing = m; info = null; error = null; }" OnPermit="PermitAsync" />
+}
+
+@code {
+    private List<MachineView>? views;
+    private Machine? removing;
+    private bool showRemoved;
+    private string? info, error;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    // Always load everything: the counters cover removed machines too; the switch only filters the table.
+    private async Task LoadAsync() => views = await Svc.ListAsync(includeRevoked: true);
+
+    private IReadOnlyList<MachineView> Shown => showRemoved ? views! : views!.Where(v => v.Status != MachineStatus.Revoked).ToList();
+
+    private int Count(MachineStatus s) => views!.Count(v => v.Status == s);
+
+    private async Task<string> ActorAsync() => (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "admin";
+
+    private async Task ConfirmRemoveAsync()
+    {
+        var m = removing!;
+        removing = null;
+        error = await Svc.RevokeAsync(m.Id, await ActorAsync()) ? null : "That machine no longer exists.";
+        info = error is null ? $"{m.Fqdn} removed. Its reporting credential is disabled." : null;
+        await LoadAsync();
+    }
+
+    private async Task PermitAsync(Machine m)
+    {
+        error = await Svc.PermitReenrollAsync(m.Id, await ActorAsync()) ? null : "That machine no longer exists.";
+        info = error is null ? $"{m.Fqdn} may re-enroll once within {Options.Value.ReenrollPermitMinutes / 60.0:0.#} hours." : null;
+        await LoadAsync();
+    }
+}

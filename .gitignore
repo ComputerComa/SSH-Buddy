@@ -486,3 +486,4 @@ App_Data/
 *.db
 *.db-*
 *.env
+release/

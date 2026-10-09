@@ -54,6 +54,13 @@ public static class AppServices
         services.AddScoped<KeyService>();
         services.AddScoped<EnrollmentService>();
         services.AddScoped<AuthorizedKeysService>();
+
+        services.Configure<MachineOptions>(config.GetSection("Machines"));
+        services.Configure<AgentOptions>(config.GetSection("Agent"));
+        services.AddSingleton<IMachineEventSink, NullMachineEventSink>();
+        services.AddScoped<TemplateCredentialService>();
+        services.AddScoped<MachineService>();
+        services.AddSingleton<AgentReleaseService>();
         return services;
     }
 

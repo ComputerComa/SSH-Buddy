@@ -268,6 +268,80 @@ namespace SshBuddy.Web.Data.Migrations
                     b.ToTable("EnrollmentTokens");
                 });
 
+            modelBuilder.Entity("SshBuddy.Web.Data.Machine", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AgentVersion")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AppliedEtag")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("ConfirmedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CredentialHash")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("CredentialIssuedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("EnrollmentNonceHash")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("FirstRegisteredUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Fqdn")
+                        .IsRequired()
+                        .HasMaxLength(253)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("LastContactUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LastIp")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LastRefusedEnrollIp")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("LastRefusedEnrollUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LastResult")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("LastSuccessUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("ReenrollPermittedUntilUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("RevokedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("TemplateCredentialId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CredentialHash")
+                        .IsUnique();
+
+                    b.HasIndex("Fqdn")
+                        .IsUnique();
+
+                    b.ToTable("Machines");
+                });
+
             modelBuilder.Entity("SshBuddy.Web.Data.SshKey", b =>
                 {
                     b.Property<Guid>("Id")
@@ -304,6 +378,39 @@ namespace SshBuddy.Web.Data.Migrations
                         .IsUnique();
 
                     b.ToTable("Keys");
+                });
+
+            modelBuilder.Entity("SshBuddy.Web.Data.TemplateCredential", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("LastUsedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("RevokedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique();
+
+                    b.ToTable("TemplateCredentials");
                 });
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<string>", b =>

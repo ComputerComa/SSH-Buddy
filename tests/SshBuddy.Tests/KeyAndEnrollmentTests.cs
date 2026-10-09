@@ -282,3 +282,92 @@ public sealed class EnrollmentServiceTests : IDisposable
         Assert.Equal(1, await db.AuditEvents.CountAsync(a => a.Action == AuditActions.EnrollmentTokenUsed));
     }
 }
+
+public sealed class StoredKeyDefenceTests : IDisposable
+{
+    private readonly TestDb _db = new();
+    public void Dispose() => _db.Dispose();
+
+    [Fact]
+    public async Task A_stored_key_that_fails_todays_validation_is_never_served_but_good_keys_still_are()
+    {
+        var good = new KeyService(_db, new FakeTime());
+        await good.AddAsync("good", Fixtures.Ed25519, "t");
+
+        // as if added before a validation fix, or inserted by hand: an off-curve ECDSA point
+        var junk = new byte[64];
+        Random.Shared.NextBytes(junk);
+        var blob = Fixtures.Blob(Fixtures.Ascii("ecdsa-sha2-nistp256"), Fixtures.Ascii("nistp256"), new byte[] { 4 }.Concat(junk).ToArray());
+        await using (var db = _db.CreateDbContext())
+        {
+            db.Keys.Add(new SshBuddy.Web.Data.SshKey
+            {
+                Label = "legacy-bad", Algorithm = "ecdsa-sha2-nistp256", KeyMaterial = Convert.ToBase64String(blob),
+                Fingerprint = "SHA256:x", CreatedUtc = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var body = (await new AuthorizedKeysService(_db).GetAsync()).Body;
+        Assert.Contains(Fixtures.Ed25519Blob, body);
+        Assert.DoesNotContain("legacy-bad", body);
+        Assert.Single(body.Split('\n', StringSplitOptions.RemoveEmptyEntries));
+    }
+}
+
+public sealed class UpgradeFromSliceOneTests : IDisposable
+{
+    private readonly string _dir = Directory.CreateTempSubdirectory("sshbuddy-upgrade-").FullName;
+    public void Dispose()
+    {
+        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        try { Directory.Delete(_dir, true); } catch (IOException) { }
+    }
+
+    [Fact]
+    public async Task An_existing_slice_one_database_upgrades_without_losing_keys_audit_or_the_distributed_list()
+    {
+        var cs = $"Data Source={Path.Combine(_dir, "old.db")}";
+        var options = new Microsoft.EntityFrameworkCore.DbContextOptionsBuilder<SshBuddy.Web.Data.AppDbContext>().UseSqlite(cs).Options;
+
+        // 1. the database exactly as slice one left it (only the Initial migration applied), with data in it
+        await using (var old = new SshBuddy.Web.Data.AppDbContext(options))
+        {
+            var migrator = Microsoft.EntityFrameworkCore.Infrastructure.AccessorExtensions.GetService<Microsoft.EntityFrameworkCore.Migrations.IMigrator>(old);
+            migrator.Migrate("20261009170204_Initial");
+            Assert.DoesNotContain(old.Database.GetAppliedMigrations(), m => m.EndsWith("AddMachines"));
+            await old.Database.ExecuteSqlRawAsync("""
+                INSERT INTO "Keys" ("Id","Label","Algorithm","KeyMaterial","Fingerprint","CreatedUtc","RevokedUtc") VALUES
+                  ('11111111-1111-1111-1111-111111111111','alice','ssh-ed25519','AAAAC3NzaC1lZDI1NTE5AAAAIMgXTvJTR9gazAPocNC4rL8cutrwxP4HUcSYPQAmkdoc','SHA256:gZDwIlFyJUsv3SZrSLW/QYwi2MQFMTwKTlrBqPloFkw','2026-01-01 00:00:00',NULL),
+                  ('22222222-2222-2222-2222-222222222222','old laptop','ssh-ed25519','AAAAC3NzaC1lZDI1NTE5AAAAIES06xsqQXHq7oscHhCzOk6qP/zPtkO/quGMqUoEXuFI','SHA256:RuNC4i6ezlmCi0tx745Syzra+YFPJARmr2A8o+8yWoE','2026-01-02 00:00:00','2026-02-01 00:00:00');
+                INSERT INTO "AuditEvents" ("TimestampUtc","Action","Actor","Detail") VALUES ('2026-01-01 00:00:00','KeyAdded','admin','alice');
+                """);
+        }
+        var factory = new FixedFactory(options);
+        var before = await new AuthorizedKeysService(factory).GetAsync();
+
+        // 2. the upgrade the operator runs: `SshBuddy.Web migrate`
+        await using (var db = new SshBuddy.Web.Data.AppDbContext(options))
+        {
+            await db.Database.MigrateAsync();
+            Assert.Contains(await db.Database.GetAppliedMigrationsAsync(), m => m.EndsWith("AddMachines"));
+            Assert.Equal(2, await db.Keys.CountAsync());
+            Assert.Equal(1, await db.AuditEvents.CountAsync());
+            Assert.Equal(0, await db.Machines.CountAsync());
+            Assert.Equal(0, await db.TemplateCredentials.CountAsync());
+        }
+
+        // 3. what machines download is byte-for-byte what they got before the upgrade (same ETag, so no spurious change)
+        var after = await new AuthorizedKeysService(factory).GetAsync();
+        Assert.Equal(before.Body, after.Body);
+        Assert.Equal(before.ETag, after.ETag);
+        Assert.Contains("alice", after.Body);
+        Assert.DoesNotContain("old_laptop", after.Body);   // the revoked key stays revoked
+    }
+
+    private sealed class FixedFactory(Microsoft.EntityFrameworkCore.DbContextOptions<SshBuddy.Web.Data.AppDbContext> o)
+        : Microsoft.EntityFrameworkCore.IDbContextFactory<SshBuddy.Web.Data.AppDbContext>
+    {
+        public SshBuddy.Web.Data.AppDbContext CreateDbContext() => new(o);
+    }
+}

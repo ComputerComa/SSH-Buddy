@@ -16,7 +16,7 @@ Inside the Debian 13 LXC (as root; `runuser` keeps the environment, so no `sudo`
 ```bash
 apt install -y sqlite3 ca-certificates libssl3t64     # sqlite3 is only for backups; OpenSSL is a .NET runtime dependency
 useradd --system --home /var/lib/ssh-buddy --shell /usr/sbin/nologin ssh-buddy
-install -d -o ssh-buddy -g ssh-buddy -m 0750 /var/lib/ssh-buddy /var/lib/ssh-buddy/keys
+install -d -o ssh-buddy -g ssh-buddy -m 0750 /var/lib/ssh-buddy /var/lib/ssh-buddy/keys /var/lib/ssh-buddy/agent
 install -d -m 0755 /opt/ssh-buddy /etc/ssh-buddy
 tar -C /opt/ssh-buddy -xzf ssh-buddy.tar.gz
 chmod +x /opt/ssh-buddy/SshBuddy.Web
@@ -39,6 +39,11 @@ Settings are environment variables (double underscore = `:`), kept in `/etc/ssh-
 | `Enrollment__TokenLifetimeMinutes` | default 15 |
 | `RateLimits__LoginPerMinute`, `RateLimits__EnrollPerMinute` | defaults 5 and 10 per IP |
 | `Security__RequireHttps` | defaults to `true` outside Development |
+| `Agent__ReleaseDirectory` | where agent releases are published ([agent-release.md](agent-release.md)) |
+| `Agent__Version` | optional: serve this version instead of the highest complete one |
+| `Machines__StaleAfterDays` | machine shown as stale after this long without contact (default 3) |
+| `Machines__ReenrollPermitMinutes` | lifetime of "Permit re-enrollment" (default 240) |
+| `RateLimits__MachineEnrollPerMinute`, `RateLimits__CheckInPerMinute` | defaults 60 per IP and 20 per machine credential |
 
 ### Reverse proxy trust
 
@@ -75,9 +80,22 @@ Smoke test:
 curl -i https://keys.home.example/api/authorized-keys     # 200, empty body, ETag header
 ```
 
+## 3b. Publish the agent and build the template
+
+```bash
+(cd agent && ./build.sh)                                    # on a build machine; version comes from agent/VERSION
+V="$(cat agent/VERSION)"
+rsync -a "agent/dist/$V/" "root@keys-lxc:/var/lib/ssh-buddy/agent/$V/"
+curl -s https://keys.home.example/api/agent/manifest.txt   # lists linux-amd64 and linux-arm64
+```
+
+Then follow [template.md](template.md) to create the template credential and the LXC template.
+The reverse proxy must forward the **real client address** (`X-Forwarded-For`) and you must list the proxy in `ReverseProxy__KnownProxies`
+or `__KnownNetworks`: the Machines page records that address, and without trust configured it would show the proxy's address for every machine.
+
 ## 4. Backups
 
-The state is one SQLite file plus the data-protection keys. `deploy/backup.sh` takes a consistent online copy
+The state is one SQLite file (keys, machines, hashed credentials, audit) plus the data-protection keys; agent releases are rebuilt from source. `deploy/backup.sh` takes a consistent online copy
 (`VACUUM INTO`, safe while the app runs) and prunes copies older than 30 days:
 
 ```bash

@@ -1,0 +1,95 @@
+@page "/templates"
+@rendermode InteractiveServer
+@attribute [Authorize]
+@inject TemplateCredentialService Svc
+@inject AuthenticationStateProvider Auth
+
+<PageTitle>Template credentials · SSH Buddy</PageTitle>
+<PageHeader Title="Template enrollment credentials">
+    <a class="btn btn-outline-secondary" href="machines">Machines</a>
+</PageHeader>
+
+<p>
+    A template credential is baked into an LXC template so new containers can enroll themselves.
+    It authorizes <strong>machine enrollment only</strong>: it cannot add or change SSH keys.
+    Only a hash is stored here; the value is shown once when you create it.
+</p>
+
+<div class="card card-body mb-4">
+    <EditForm Model="form" OnValidSubmit="CreateAsync" FormName="create-template">
+        <div class="row g-2 align-items-end">
+            <div class="col-md-6">
+                <label class="form-label" for="tpl-name">Name</label>
+                <InputText id="tpl-name" class="form-control" @bind-Value="form.Name" placeholder="debian-13-lxc-template" maxlength="64" />
+            </div>
+            <div class="col-md-3"><button type="submit" class="btn btn-primary w-100">Create credential</button></div>
+        </div>
+    </EditForm>
+    <AlertMessage Message="@error" />
+</div>
+
+@if (created is not null)
+{
+    <div class="alert alert-success" id="created-credential">
+        <strong>@created.Name</strong> created. Copy it now — it cannot be shown again.
+        <CopyBox Label="Enrollment credential" Value="@created.Token" Rows="2" />
+        <div class="small">Save it as <code>/etc/ssh-buddy/enroll-token</code> (mode 0600) in the template.</div>
+    </div>
+}
+
+@if (credentials is not null)
+{
+    <div class="table-responsive">
+        <table class="table align-middle">
+            <thead><tr><th>Name</th><th>Created</th><th>Last used</th><th>Status</th><th></th></tr></thead>
+            <tbody>
+                @foreach (var c in credentials)
+                {
+                    <tr>
+                        <td>@c.Name</td>
+                        <td><RelativeTime Value="c.CreatedUtc" /></td>
+                        <td><RelativeTime Value="c.LastUsedUtc" /></td>
+                        <td><span class="badge @(c.RevokedUtc is null ? "text-bg-success" : "text-bg-secondary")">@(c.RevokedUtc is null ? "Active" : "Revoked")</span></td>
+                        <td class="text-end">
+                            @if (c.RevokedUtc is null)
+                            {
+                                <button class="btn btn-sm btn-outline-danger" @onclick="() => RevokeAsync(c)">Revoke</button>
+                            }
+                        </td>
+                    </tr>
+                }
+                @if (credentials.Count == 0)
+                {
+                    <tr><td colspan="5" class="text-center text-muted py-4">No template credentials yet.</td></tr>
+                }
+            </tbody>
+        </table>
+    </div>
+    <p class="small text-muted">Revoking a credential blocks new enrollments with it. Machines that already enrolled keep their own credentials.</p>
+}
+
+@code {
+    private sealed class Form { public string Name { get; set; } = ""; }
+    private readonly Form form = new();
+    private List<TemplateCredential>? credentials;
+    private CreatedTemplateCredential? created;
+    private string? error;
+
+    protected override async Task OnInitializedAsync() => credentials = await Svc.ListAsync();
+
+    private async Task<string> ActorAsync() => (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "admin";
+
+    private async Task CreateAsync()
+    {
+        var (result, err) = await Svc.CreateAsync(form.Name, await ActorAsync());
+        error = err;
+        if (result is not null) { created = result; form.Name = ""; }
+        credentials = await Svc.ListAsync();
+    }
+
+    private async Task RevokeAsync(TemplateCredential c)
+    {
+        await Svc.RevokeAsync(c.Id, await ActorAsync());
+        credentials = await Svc.ListAsync();
+    }
+}

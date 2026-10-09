@@ -1,4 +1,6 @@
 using System.Buffers.Binary;
+using System.Globalization;
+using System.Numerics;
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 
@@ -15,6 +17,10 @@ public sealed record KeyParseResult(ParsedPublicKey? Key, string? Error)
 /// Strict parser for a single OpenSSH public key line ("algorithm base64 [comment]").
 /// Only the algorithm and key blob are kept; the comment is discarded, so nothing
 /// attacker-controlled can reach an authorized_keys line except the validated blob.
+///
+/// It must accept exactly what the Go agent's golang.org/x/crypto/ssh parser accepts (never more): the agent
+/// rejects a whole key list if any line fails, so a key stored here that the agent refuses would stop every
+/// machine from receiving updates and revocations. testdata/key-corpus.txt, shared with the agent's tests, enforces this.
 /// </summary>
 public static partial class PublicKeyParser
 {
@@ -96,9 +102,15 @@ public static partial class PublicKeyParser
 
             case "ssh-rsa":
                 if (!r.TryReadString(out var e) || !r.TryReadString(out var n)) return Malformed;
+                // SSH mpints must be positive and minimally encoded; x/crypto re-marshals and compares, so a
+                // redundant leading zero (or a "negative" value) makes the agent reject the key.
+                if (!IsMinimalPositiveMpint(e) || !IsMinimalPositiveMpint(n)) return Malformed;
+                var exponent = new BigInteger(e, isUnsigned: true, isBigEndian: true);
+                // x/crypto: the exponent must be odd, at least 3, and at most 24 bits.
+                if (exponent < 3 || exponent.IsEven || BitLength(e) > 24) return Malformed;
                 var bits = BitLength(n);
                 if (bits < MinRsaBits) return $"RSA keys must be at least {MinRsaBits} bits.";
-                if (bits > MaxRsaBits || BitLength(e) < 2) return Malformed;
+                if (bits > MaxRsaBits) return Malformed;
                 break;
 
             case "ecdsa-sha2-nistp256" or "ecdsa-sha2-nistp384" or "ecdsa-sha2-nistp521":
@@ -122,8 +134,42 @@ public static partial class PublicKeyParser
     {
         if (!r.TryReadString(out var c) || System.Text.Encoding.ASCII.GetString(c) != curve) return false;
         if (!r.TryReadString(out var point)) return false;
-        var expected = curve switch { "nistp256" => 65, "nistp384" => 97, _ => 133 };
-        return point.Length == expected && point[0] == 0x04;
+        var size = curve switch { "nistp256" => 32, "nistp384" => 48, _ => 66 };
+        if (point.Length != 1 + 2 * size || point[0] != 0x04) return false;   // uncompressed points only
+        return IsOnCurve(curve,
+            new BigInteger(point.AsSpan(1, size), isUnsigned: true, isBigEndian: true),
+            new BigInteger(point.AsSpan(1 + size, size), isUnsigned: true, isBigEndian: true));
+    }
+
+    // Short Weierstrass y^2 = x^3 - 3x + b (mod p). Exact arithmetic, so no dependency on the platform's crypto library.
+    private static readonly Dictionary<string, (BigInteger P, BigInteger B)> Curves = new()
+    {
+        ["nistp256"] = (Hex("FFFFFFFF00000001000000000000000000000000FFFFFFFFFFFFFFFFFFFFFFFF"),
+                        Hex("5AC635D8AA3A93E7B3EBBD55769886BC651D06B0CC53B0F63BCE3C3E27D2604B")),
+        ["nistp384"] = (Hex("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFFFF0000000000000000FFFFFFFF"),
+                        Hex("B3312FA7E23EE7E4988E056BE3F82D19181D9C6EFE8141120314088F5013875AC656398D8A2ED19D2A85C8EDD3EC2AEF")),
+        ["nistp521"] = ((BigInteger.One << 521) - 1,
+                        Hex("0051953EB9618E1C9A1F929A21A0B68540EEA2DA725B99B315F3B8B489918EF109E156193951EC7E937B1652C0BD3BB1BF073573DF883D2C34F1EF451FD46B503F00")),
+    };
+
+    private static BigInteger Hex(string h) => BigInteger.Parse("0" + h, NumberStyles.HexNumber, CultureInfo.InvariantCulture);
+
+    private static bool IsOnCurve(string curve, BigInteger x, BigInteger y)
+    {
+        var (p, b) = Curves[curve];
+        if (x >= p || y >= p) return false;
+        var left = y * y % p;
+        var right = ((x * x % p * x - 3 * x + b) % p + p) % p;
+        return left == right;
+    }
+
+    /// <summary>Positive, non-zero, with no redundant leading 0x00 and no unnecessary sign handling.</summary>
+    private static bool IsMinimalPositiveMpint(byte[] v)
+    {
+        if (v.Length == 0) return false;                              // zero
+        if ((v[0] & 0x80) != 0) return false;                         // negative
+        if (v[0] == 0) return v.Length > 1 && (v[1] & 0x80) != 0;     // a leading zero is only allowed to protect a high bit
+        return true;
     }
 
     private static int BitLength(byte[] mpint)

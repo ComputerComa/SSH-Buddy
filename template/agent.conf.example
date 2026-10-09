@@ -1,0 +1,7 @@
+# /etc/ssh-buddy/agent.conf  (not a secret; identical on every machine)
+# The SSH Buddy origin. Must be https and signed by a CA the container trusts.
+url=https://keys.home.example
+# How often the systemd timer runs the agent (1m .. 24h). Re-run `ssh-buddy-agent install` after changing it.
+interval=5m
+# Optional: set only if the container's FQDN cannot be derived from its hostname, /etc/hosts or resolv.conf.
+# fqdn=web1.home.example

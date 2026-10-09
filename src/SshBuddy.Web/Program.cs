@@ -43,8 +43,25 @@ builder.Services.AddRateLimiter(o =>
         RateLimitPartition.GetFixedWindowLimiter(
             ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
             _ => new FixedWindowRateLimiterOptions { PermitLimit = limit, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 });
+    // Backstop for /api/machines/*: random bearer values each get their own per-credential bucket below, so an
+    // unauthenticated flood needs a per-address ceiling too. Generous, because many machines can share one NAT address.
+    o.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(ctx =>
+        ctx.Request.Path.StartsWithSegments("/api/machines")
+            ? RateLimitPartition.GetFixedWindowLimiter("machines-ip:" + ctx.Connection.RemoteIpAddress,
+                _ => new FixedWindowRateLimiterOptions { PermitLimit = config.GetValue("RateLimits:MachineApiPerIpPerMinute", 600), Window = TimeSpan.FromMinutes(1), QueueLimit = 0 })
+            : RateLimitPartition.GetNoLimiter("none"));
     o.AddPolicy("login", ctx => ByIp(ctx, config.GetValue("RateLimits:LoginPerMinute", 5)));
     o.AddPolicy("enroll", ctx => ByIp(ctx, config.GetValue("RateLimits:EnrollPerMinute", 10)));
+    o.AddPolicy("machine-enroll", ctx => ByIp(ctx, config.GetValue("RateLimits:MachineEnrollPerMinute", 60)));
+    // Check-ins are limited per credential, not per IP: a proxy that hides client addresses would otherwise
+    // put the whole fleet in one bucket and make healthy machines look stale.
+    o.AddPolicy("checkin", ctx =>
+    {
+        var bearer = ctx.Request.Headers.Authorization.ToString();
+        var key = bearer.Length > 0 ? "c:" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(bearer))) : "ip:" + ctx.Connection.RemoteIpAddress;
+        return RateLimitPartition.GetFixedWindowLimiter(key,
+            _ => new FixedWindowRateLimiterOptions { PermitLimit = config.GetValue("RateLimits:CheckInPerMinute", 20), Window = TimeSpan.FromMinutes(1), QueueLimit = 0 });
+    });
 });
 
 var app = builder.Build();

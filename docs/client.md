@@ -1,4 +1,8 @@
-# Linux client (Debian 13)
+# Legacy shell client (Debian 13)
+
+> **Superseded by the Go agent** ([agent.md](agent.md), [template.md](template.md)), which also registers the machine and reports status.
+> This shell client is kept for installations that want only the key sync. Do not run both: `ssh-buddy-agent install`
+> stops and disables `ssh-buddy-sync.timer` so two writers never fight over `root-managed`.
 
 `ssh-buddy-sync` fetches the global key list and installs it as `/etc/ssh/authorized_keys.d/root-managed`.
 It runs as root from a systemd timer; there is no per-machine credential, so it is safe to bake into an LXC template.

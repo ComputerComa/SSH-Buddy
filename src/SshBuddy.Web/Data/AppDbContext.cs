@@ -9,6 +9,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : IdentityDbCo
     public DbSet<SshKey> Keys => Set<SshKey>();
     public DbSet<EnrollmentToken> EnrollmentTokens => Set<EnrollmentToken>();
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
+    public DbSet<TemplateCredential> TemplateCredentials => Set<TemplateCredential>();
+    public DbSet<Machine> Machines => Set<Machine>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -29,5 +31,20 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : IdentityDbCo
         });
 
         b.Entity<AuditEvent>(e => e.HasIndex(a => a.TimestampUtc));
+
+        b.Entity<TemplateCredential>(e =>
+        {
+            e.HasIndex(t => t.TokenHash).IsUnique();
+            e.Property(t => t.TokenHash).HasMaxLength(64);
+            e.Property(t => t.Name).HasMaxLength(64);
+        });
+
+        b.Entity<Machine>(e =>
+        {
+            e.HasIndex(m => m.Fqdn).IsUnique();
+            e.HasIndex(m => m.CredentialHash).IsUnique(); // nulls (revoked) do not collide in SQLite
+            e.Property(m => m.Fqdn).HasMaxLength(253);
+            e.Property(m => m.LastError).HasMaxLength(500);
+        });
     }
 }

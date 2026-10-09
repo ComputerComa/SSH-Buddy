@@ -1,0 +1,20 @@
+<span class="badge @Css" title="@Detail">@Label</span>
+
+@code {
+    [Parameter] public MachineStatus Status { get; set; }
+    [Parameter] public string? Detail { get; set; }
+
+    private string Css => Status switch
+    {
+        MachineStatus.Healthy => "text-bg-success",
+        MachineStatus.SyncError => "text-bg-danger",
+        MachineStatus.Stale => "text-bg-warning",
+        _ => "text-bg-secondary",
+    };
+
+    private string Label => Status switch
+    {
+        MachineStatus.SyncError => "Sync error",
+        _ => Status.ToString(),
+    };
+}
