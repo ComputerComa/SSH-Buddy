@@ -1,0 +1,34 @@
+#!/bin/sh
+# SSH Buddy's operator commands, run as the service user with the service's settings (installed as /usr/local/sbin/ssh-buddy):
+#   ssh-buddy admin create --email you@example.com
+#   ssh-buddy admin reset-password --email you@example.com
+#   ssh-buddy migrate
+#   ssh-buddy version
+set -eu
+CONF=/etc/ssh-buddy/ssh-buddy.env
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "ssh-buddy: must be run as root" >&2
+    exit 1
+fi
+
+# Read the file the way systemd's EnvironmentFile= does: the value is everything after the first '=', spaces included.
+# (Sourcing it with `set -a; . file` would cut "ConnectionStrings__Default=Data Source=..." at the space.)
+while IFS= read -r line || [ -n "$line" ]; do
+    line=${line#"${line%%[![:space:]]*}"}
+    case "$line" in
+        '' | '#'* | ';'*) continue ;;
+        *=*) ;;
+        *) continue ;;
+    esac
+    name=${line%%=*}
+    value=${line#*=}
+    case "$value" in
+        \"*\") value=${value#\"}; value=${value%\"} ;;
+        \'*\') value=${value#\'}; value=${value%\'} ;;
+    esac
+    export "$name=$value"
+done < "$CONF"
+
+cd /opt/ssh-buddy
+exec runuser -u ssh-buddy -- ./SshBuddy.Web "$@"

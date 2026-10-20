@@ -487,3 +487,5 @@ App_Data/
 *.db-*
 *.env
 release/
+# Release bundles from ./build.sh
+/dist/

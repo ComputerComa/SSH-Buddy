@@ -1,16 +1,26 @@
+using System.Reflection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using SshBuddy.Web.Data;
 
 namespace SshBuddy.Web.Services;
 
-/// <summary>Operator commands: <c>migrate</c>, <c>admin create</c>, <c>admin reset-password</c>.</summary>
+/// <summary>Operator commands: <c>migrate</c>, <c>admin create</c>, <c>admin reset-password</c>, <c>version</c>.</summary>
 public static class Cli
 {
-    public static bool IsCommand(string[] args) => args.Length > 0 && args[0] is "migrate" or "admin";
+    public static readonly string Version =
+        typeof(Cli).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
+
+    public static bool IsCommand(string[] args) => args.Length > 0 && args[0] is "migrate" or "admin" or "version" or "--version";
 
     public static async Task<int> RunAsync(string[] args)
     {
+        if (args is ["version" or "--version"])
+        {
+            Console.WriteLine(Version);
+            return 0;
+        }
+
         var builder = WebApplication.CreateBuilder([]);
         builder.Logging.AddFilter("Microsoft", LogLevel.Warning); // more specific than the config "Default" rule, which would otherwise print every EF command
         builder.Services.AddSshBuddyCore(builder.Configuration, builder.Environment);
@@ -36,6 +46,7 @@ public static class Cli
                       migrate
                       admin create --email <email> [--password-stdin]
                       admin reset-password --email <email> [--password-stdin]
+                      version
                     """);
                 return 2;
         }

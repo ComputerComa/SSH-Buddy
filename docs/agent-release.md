@@ -16,10 +16,13 @@ Raise the pin (and re-run the scan) when new Go security releases appear.
 
 ```bash
 cd agent
-./build.sh            # version from agent/VERSION
-./build.sh 1.2.0      # or explicit
+./build.sh 1.2.0      # explicit version
+./build.sh            # 0.0.0-dev
 ./build.sh --verify   # builds twice and fails unless the checksums are identical
 ```
+
+Releases do not run this by hand: the version comes from the git tag, and the top-level `build.sh` (run by the
+GitHub workflow, see the README's *Releases*) calls `agent/build.sh <version>` and puts the result into the server bundle.
 
 `build.sh` runs the tests, runs `govulncheck` if it is installed
 (`go install golang.org/x/vuln/cmd/govulncheck@latest`), then writes
@@ -39,7 +42,9 @@ Test commands: `cd agent && go test -race ./...` (the Go suite uses a real TLS s
 ## Publish
 
 SSH Buddy serves whatever it finds under `Agent:ReleaseDirectory` (default `App_Data/agent`, in production
-`Agent__ReleaseDirectory`). Copy the version directory there; no restart is needed.
+`Agent__ReleaseDirectory`). The server bundle carries `agent/<version>/`, and its `install.sh` copies it there, so installing
+or upgrading the server publishes the agent of the same version. To publish an agent build by hand, copy the version
+directory there; no restart is needed.
 
 ```bash
 V=1.2.0; rsync -a "agent/dist/$V/" "root@keys-lxc:/var/lib/ssh-buddy/agent/$V/"
@@ -68,5 +73,14 @@ Endpoints (all public, like the key list, because they contain no secrets):
 ## Upgrades
 
 First-boot download/install is implemented. Automatic ongoing upgrades are not: to roll a new agent onto existing machines,
-publish the new version and run the bootstrap again on them (`rm /var/lib/ssh-buddy-agent/bootstrap-complete && systemctl start ssh-buddy-bootstrap`),
-which replaces the binary atomically only after the new one downloads, matches its checksum and runs.
+publish the new version (upgrading the server does) and run the bootstrap again on them, which replaces the binary atomically
+only after the new one downloads, matches its checksum and runs:
+
+```bash
+rm /var/lib/ssh-buddy-agent/bootstrap-complete && systemctl restart ssh-buddy-bootstrap
+# from the Proxmox host:
+for ct in 101 102 103; do pct exec "$ct" -- sh -c 'rm -f /var/lib/ssh-buddy-agent/bootstrap-complete && systemctl restart ssh-buddy-bootstrap'; done
+```
+
+Use `restart`, not `start`: the unit is `RemainAfterExit=yes`, so after its first-boot run it stays "active (exited)" and
+`systemctl start` does nothing.

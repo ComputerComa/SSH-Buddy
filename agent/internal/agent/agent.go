@@ -37,8 +37,9 @@ type Agent struct {
 	Log      io.Writer
 }
 
-// NewHTTPClient builds the only HTTP client the agent uses: HTTPS, normal certificate verification against the
-// system roots (or, in tests, an injected pool), TLS 1.2+, bounded timeouts and no redirects.
+// NewHTTPClient builds the only HTTP client the agent uses: for https URLs, normal certificate verification against
+// the system roots (or, in tests, an injected pool) and TLS 1.2+; plain http only when agent.conf says http://.
+// Bounded timeouts and no redirects either way.
 func NewHTTPClient(roots *x509.CertPool) *http.Client {
 	return &http.Client{
 		Timeout: 30 * time.Second,

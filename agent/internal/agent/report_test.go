@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -52,6 +53,24 @@ func TestFirstRunSyncsThenEnrollsThenReportsHealthy(t *testing.T) {
 	}
 	if _, err := os.Stat(e.nonceFile()); !os.IsNotExist(err) {
 		t.Error("the nonce must be removed after the first successful check-in")
+	}
+}
+
+func TestPlainHTTPOriginSyncsEnrollsAndReports(t *testing.T) {
+	e := newEnv(t)
+	plain := newFakeServerOn(t, httptest.NewServer)
+	e.srv, e.agent.Config.BaseURL = plain, plain.URL
+	body := list(newKey(t))
+	plain.set(func(f *fakeServer) { f.keyBody = body })
+
+	if code := e.run(); code != ExitOK {
+		t.Fatalf("exit %d\n%s", code, e.log)
+	}
+	if e.managed() != body {
+		t.Fatal("keys not installed")
+	}
+	if _, enrolls, checkins := plain.snapshot(); len(enrolls) != 1 || len(checkins) != 1 {
+		t.Fatalf("enrolls=%d checkins=%d", len(enrolls), len(checkins))
 	}
 }
 

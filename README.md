@@ -30,10 +30,11 @@ Not included, on purpose: SSH certificates, per-host key assignment, a bastion, 
 src/SshBuddy.Web/   app: Components/ (Blazor), Services/ (all business logic), Endpoints/, Data/ (+ Migrations)
 tests/SshBuddy.Tests  xUnit: keys, machines, HTTP auth/contracts, release serving, legacy client script
 agent/              Go agent: internal/keys, internal/agent (sync, enroll, report), internal/install, build.sh
-template/           first-boot bootstrap + unit, install-into-template.sh, prepare-template.sh
+template/           first-boot bootstrap + unit, install-into-template.sh (in a container or --root for DAB), prepare-template.sh
 client/             legacy shell client (no reporting)
-deploy/             systemd unit, env example, nginx example, backup script
+deploy/             server install.sh, `ssh-buddy` operator command, systemd unit, env example, nginx example, backup script
 docs/               deployment.md, template.md, agent.md, agent-release.md, client.md
+build.sh            release bundles into dist/ (see Releases); .github/workflows/build.yml runs it in CI
 ```
 
 `KeyService`, `EnrollmentService`, `AuthorizedKeysService`, `PublicKeyParser`, `TemplateCredentialService`, `MachineService`
@@ -48,7 +49,8 @@ printf '%s\n' 'a-long-passphrase-here' | dotnet run --project src/SshBuddy.Web -
 dotnet run --project src/SshBuddy.Web                                   # http://localhost:5094 (see launchSettings)
 dotnet test                                                             # includes the client-script tests (needs bash)
 (cd agent && go test -race ./...)                                       # the agent suite (real TLS test server)
-(cd agent && ./build.sh --verify)                                       # release build + reproducibility check
+(cd agent && ./build.sh --verify)                                       # agent build + reproducibility check
+VERSION=1.2.0 ./build.sh                                                # release bundles in dist/ (default version 0.0.0-dev)
 ```
 
 Data (`App_Data/`) and `*.env` files are git-ignored. Nothing secret lives in the repo.
@@ -59,22 +61,64 @@ New migration after changing the model:
 dotnet dotnet-ef migrations add <Name> --project src/SshBuddy.Web --output-dir Data/Migrations
 ```
 
+## Releases
+
+Versions follow [SemVer](https://semver.org) and come from git tags; the server and the agent always share one version. To cut a release:
+
+```bash
+git tag -a v1.2.0 -m v1.2.0 && git push origin v1.2.0
+```
+
+The [build workflow](.github/workflows/build.yml) runs both test suites (and `govulncheck`), builds the bundles with the tag's
+version stamped into the server and the agent, and publishes them to a GitHub release with a `SHA256SUMS` file. A tag with a
+pre-release suffix (`v1.2.0-rc.1`) becomes a pre-release; a tag that isn't `vMAJOR.MINOR.PATCH[-prerelease]` fails the build.
+Pushes to `master` and pull requests run the same tests and build without releasing.
+
+| Asset | Contents |
+|---|---|
+| `ssh-buddy-server-linux-x64.tar.gz` | the self-contained server, `install.sh`, the `ssh-buddy` operator command, units and examples, **and the agent release it serves** |
+| `ssh-buddy-template.tar.gz` | the first-boot bootstrap and `install-into-template.sh` for your LXC template (architecture-independent) |
+
+Asset names carry no version, so `releases/latest/download/<asset>` always points at the newest release.
+
+## Install
+
+**Server**, in a Debian 13 container, as root ([docs/deployment.md](docs/deployment.md) has the details and the reverse proxy):
+
+```bash
+curl -fsSL https://github.com/ComputerComa/SSH-Buddy/releases/latest/download/ssh-buddy-server-linux-x64.tar.gz | tar xz
+ssh-buddy-server-linux-x64/install.sh      # installs; asks you to fill in /etc/ssh-buddy/ssh-buddy.env
+$EDITOR /etc/ssh-buddy/ssh-buddy.env       # AllowedHosts, App__PublicBaseUrl, ReverseProxy__* (or plain HTTP, see below)
+systemctl start ssh-buddy
+ssh-buddy admin create --email you@example.com
+```
+
+No certificate? On a network you trust you can run everything over plain HTTP: the app listens on port 80 itself and the
+template gets an `http://` URL ([docs/deployment.md](docs/deployment.md#without-tls-plain-http)).
+
+Re-running `install.sh` from a newer bundle upgrades in place (database backed up first, migrated on start) and publishes that
+version's agent, so new containers get it on their first boot.
+
+**Machines**: create a template credential in the UI (**Machines → Template credentials**), then put the bootstrap into your LXC
+template, either with **DAB** on the Proxmox host (`install-into-template.sh --root "$(dab basedir)" …`) or inside a container you
+convert by hand. Both are in [docs/template.md](docs/template.md).
+
 ## First-run administrator
 
 There is no registration page and no default account. Create the single administrator on the server:
 
 ```bash
-cd /opt/ssh-buddy && set -a && . /etc/ssh-buddy/ssh-buddy.env && set +a
-runuser -u ssh-buddy -- ./SshBuddy.Web admin create --email you@example.com
+ssh-buddy admin create --email you@example.com
 ```
 
 It prompts twice for a password (minimum 12 characters). For scripted use, pass `--password-stdin` and pipe the password in.
-`admin create` refuses to run once an administrator exists; use `admin reset-password --email …` to recover access.
+`admin create` refuses to run once an administrator exists; use `ssh-buddy admin reset-password --email …` to recover access.
+`ssh-buddy` (installed by `install.sh`) runs the app's commands as the service user with the settings from `/etc/ssh-buddy/ssh-buddy.env`.
 
 ## Machines, templates and the agent (summary)
 
 1. **Machines → Template credentials**: create a credential for your LXC template (shown once, stored hashed). It can only enroll machines.
-2. Build the template with [`template/install-into-template.sh`](docs/template.md) and publish an agent release ([docs/agent-release.md](docs/agent-release.md)).
+2. Build the template with [`template/install-into-template.sh`](docs/template.md) (with DAB or by hand). The server serves the agent release that came in its bundle ([docs/agent-release.md](docs/agent-release.md)).
 3. Each clone's `ssh-buddy-bootstrap.service` downloads the agent (size + SHA-256 verified, atomic install), installs a validated sshd drop-in,
    runs the first sync, registers under its FQDN, then enables the timer.
 4. **Machines** shows Healthy / Sync error / Stale (default 3 days) / Removed, with last contact, last successful sync, IP, agent version and key-list revision.
@@ -90,6 +134,7 @@ It prompts twice for a password (minimum 12 characters). For scripted use, pass 
 - Enrollment tokens: 256-bit random, stored as SHA-256 only, sent in `Authorization: Bearer`, consumed by a conditional `UPDATE` in the same transaction as the key insert. Bad input or a duplicate key rolls back and leaves the token usable until it expires.
 - The server stores only `algorithm + key blob`; the submitted comment is discarded. Labels are rendered into the list as a sanitized comment (printable ASCII, no spaces), so nothing user-controlled can add `authorized_keys` options.
 - In Production, `/api/*` over plain HTTP is answered `403` rather than redirected (a redirected POST would already have leaked the token). The UI redirects to HTTPS and uses `Secure` cookies.
+  You can switch this off (`Security__RequireHttps=false`) and run everything over plain HTTP on a network you trust; the agent then needs an `http://` URL. See [docs/deployment.md](docs/deployment.md#without-tls-plain-http) for what that gives up.
 - The Bearer token appears in the enrolling machine's process list and shell history; this is acceptable only because tokens are short-lived and single-use.
 - Do not enable HTTP request logging on the reverse proxy for `/api/keys/enroll`, `/api/machines/*` with headers.
 - Three unrelated credential kinds exist and none works for another's purpose: the single-use key-upload token (`sbe_`), the shared template credential (`sbt_`, enroll machines only) and the per-machine credential (`sbm_`, report only). All are stored as SHA-256 hashes; the machine credential and nonce live in a root-only file on the machine.
@@ -116,17 +161,28 @@ More: [docs/deployment.md](docs/deployment.md), [docs/client.md](docs/client.md)
   rollback (previous drop-in restored exactly, overridden `AuthorizedKeysFile` = failure, missing host keys, legacy timer).
 * `govulncheck` on the agent: 0 affecting vulnerabilities with Go 1.26.9 / x/crypto 0.58.0 (it found 36 with the Go 1.24.4 that was installed locally).
 * `./build.sh --verify`: two builds, and a build from a different directory, were byte-identical.
-* **`integration/run.sh`: 56 checks, 0 failures** from a clean start from a clean start (see [integration/README.md](integration/README.md)). It covers: Docker (nginx with TLS from a test CA → app; Debian 13 containers with **systemd as PID 1**): template build and hygiene
+* **`integration/run.sh`: 56 checks, 0 failures** from a clean start (see [integration/README.md](integration/README.md)). It covers: Docker (nginx with TLS from a test CA → app; Debian 13 containers with **systemd as PID 1**): template build and hygiene
   check; first-boot bootstrap from a committed template image; agent download + checksum + atomic install; sshd drop-in validated;
   first sync + enrollment; timer-driven runs (304 path); real `ssh` login with a key added in the UI and refused after revocation;
   recovery key untouched; server outage keeps keys and recovers; refused enrollment of a rebuilt container, "re-enrollment requested",
   Permit, completion; stale → healthy; recorded client IP is the container's, not the proxy's; no raw credential in the server log, database,
   client journal or nginx log.
+* **Release bundles** (`build.sh` output, Docker with systemd as PID 1; 40 checks): `install.sh` in a bare Debian 13 container
+  (installs the missing packages, waits for a real config, starts, `ssh-buddy admin create` and `version`), a DAB-style rootfs
+  prepared from outside with `install-into-template.sh --root` (unit enabled via `systemctl --root`, CA added in a chroot, nothing
+  written to the host), a container booted from it bootstrapping against that server, then an upgrade 1.1.0-rc.1 → 1.1.0
+  (database backed up, data and config kept, the new agent served) and the agent rolled onto the machine with
+  `systemctl restart ssh-buddy-bootstrap`. The same in **plain-HTTP mode** (15 checks): the app on port 80 without a proxy, a
+  real login over http, a template with an `http://` URL bootstrapping, and an `https://` URL not falling back to http.
+  Neither run is part of the repository's scripts.
 * **UI in a real browser** (Playwright/Chromium, 24 checks across four scripts): login/logout, anonymous redirects, add/duplicate/private-key/option
   rejection, revoke/reactivate, key-upload token page, template credential shown once, Machines page (counters, IP, version, revision),
   removal confirmation text and cancel, removal, re-enrollment flag and permit, audit page.
 
 **Not verified:**
+
+* The **GitHub workflow** has not run on GitHub yet (it passes `actionlint`; its steps were run locally). Real **DAB** on a Proxmox host
+  is untested: a Debian 13 rootfs directory stood in for `$(dab basedir)`.
 
 * A real **Proxmox LXC** host: `network-online.target` behaviour, how Proxmox writes the hostname and `/etc/hosts`, unprivileged-container
   restrictions. Docker containers stood in for LXC; the only failed unit in them was `systemd-modules-load` (a container artefact).

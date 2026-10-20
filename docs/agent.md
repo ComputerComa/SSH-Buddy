@@ -14,7 +14,7 @@ Files on a machine:
 | Path | Purpose | Mode |
 |---|---|---|
 | `/usr/local/sbin/ssh-buddy-agent` | the binary | 0755 |
-| `/etc/ssh-buddy/agent.conf` | `url=` (https origin), `interval=`, optional `fqdn=` | 0644 |
+| `/etc/ssh-buddy/agent.conf` | `url=` (https origin, or http if you run without TLS), `interval=`, optional `fqdn=` | 0644 |
 | `/etc/ssh-buddy/enroll-token` | the **shared template credential** (can only enroll machines) | 0600 |
 | `/var/lib/ssh-buddy-agent/` | per-machine state, root only | 0700 |
 | `…/machine-credential` | this machine's own reporting credential | 0600 |
@@ -28,7 +28,8 @@ Files on a machine:
 
 1. **Lock** (`flock` on `/run/ssh-buddy-agent.lock`, non-blocking). A second concurrent run exits with code 4 and touches nothing.
 2. **Synchronize keys** (independent of everything that follows):
-   * `GET /api/authorized-keys` over HTTPS with normal certificate verification against the system CA store, TLS ≥ 1.2,
+   * `GET /api/authorized-keys` over HTTPS with normal certificate verification against the system CA store, TLS ≥ 1.2
+     (or plain HTTP when `url=` says `http://`; see [deployment.md](deployment.md#without-tls-plain-http)),
      10 s connect / 10 s handshake / 15 s first byte / 30 s total, no redirects, no proxy, 1 MiB cap.
    * `If-None-Match` is sent **only if** the managed file exists, is a regular file (not a symlink), still validates as a key
      list, and hashes to exactly what the cached ETag described. Anything else (file edited, deleted, corrupted, state missing)

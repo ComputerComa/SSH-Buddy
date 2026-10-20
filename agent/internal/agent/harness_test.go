@@ -48,7 +48,10 @@ type checkin struct {
 
 func etagOf(body string) string { return `"` + sha256Hex([]byte(body))[:16] + `"` }
 
-func newFakeServer(t *testing.T) *fakeServer {
+func newFakeServer(t *testing.T) *fakeServer { return newFakeServerOn(t, httptest.NewTLSServer) }
+
+// newFakeServerOn starts the fake API with start: httptest.NewTLSServer, or httptest.NewServer for plain http.
+func newFakeServerOn(t *testing.T, start func(http.Handler) *httptest.Server) *fakeServer {
 	t.Helper()
 	f := &fakeServer{credential: "sbm_testcredential_0123456789abcdefghijklmnop"}
 	mux := http.NewServeMux()
@@ -118,7 +121,7 @@ func newFakeServer(t *testing.T) *fakeServer {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
-	f.Server = httptest.NewTLSServer(mux)
+	f.Server = start(mux)
 	t.Cleanup(f.Close)
 	return f
 }

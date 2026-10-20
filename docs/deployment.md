@@ -1,29 +1,38 @@
 # Deployment: Debian 13 LXC behind an HTTPS reverse proxy
 
-## 1. Build (on your workstation)
+## 1. Get a server bundle
 
-A self-contained publish needs no .NET install in the container:
+Either download the latest release, or build one (on a machine with the .NET 10 SDK and Go; see [agent-release.md](agent-release.md)):
 
 ```bash
-dotnet publish src/SshBuddy.Web -c Release -r linux-x64 --self-contained -o publish
-tar -C publish -czf ssh-buddy.tar.gz .
+curl -fsSLO https://github.com/ComputerComa/SSH-Buddy/releases/latest/download/ssh-buddy-server-linux-x64.tar.gz
+# or: VERSION=1.2.0 ./build.sh   ->  dist/ssh-buddy-server-linux-x64.tar.gz
 ```
 
-## 2. Container
+The bundle is self-contained (no .NET in the container) and carries the agent release this server version serves.
 
-Inside the Debian 13 LXC (as root; `runuser` keeps the environment, so no `sudo` is needed):
+## 2. Install in the container
+
+Inside the Debian 13 LXC, as root:
 
 ```bash
-apt install -y sqlite3 ca-certificates libssl3t64     # sqlite3 is only for backups; OpenSSL is a .NET runtime dependency
-useradd --system --home /var/lib/ssh-buddy --shell /usr/sbin/nologin ssh-buddy
-install -d -o ssh-buddy -g ssh-buddy -m 0750 /var/lib/ssh-buddy /var/lib/ssh-buddy/keys /var/lib/ssh-buddy/agent
-install -d -m 0755 /opt/ssh-buddy /etc/ssh-buddy
-tar -C /opt/ssh-buddy -xzf ssh-buddy.tar.gz
-chmod +x /opt/ssh-buddy/SshBuddy.Web
-install -m 0640 -o root -g ssh-buddy deploy/ssh-buddy.env.example /etc/ssh-buddy/ssh-buddy.env
+tar xzf ssh-buddy-server-linux-x64.tar.gz
+ssh-buddy-server-linux-x64/install.sh
+```
+
+`install.sh` installs `ca-certificates`, `libssl3t64` (a .NET runtime dependency) and `sqlite3` (for backups) if missing,
+creates the `ssh-buddy` system user, `/var/lib/ssh-buddy` (data) and `/etc/ssh-buddy/ssh-buddy.env` (from the example,
+`root:ssh-buddy 0640`), installs the app in `/opt/ssh-buddy`, publishes the bundled agent release, installs the
+`ssh-buddy` operator command and `ssh-buddy-backup`, and enables `ssh-buddy.service`. It does not start the service while
+the config still names `keys.home.example`:
+
+```bash
 $EDITOR /etc/ssh-buddy/ssh-buddy.env        # host name, base URL, proxy address
-install -m 0644 deploy/ssh-buddy.service /etc/systemd/system/
+systemctl start ssh-buddy
 ```
+
+To ship a ready config instead, put a filled-in `ssh-buddy.env` next to `install.sh` in the unpacked bundle (or in
+`deploy/ssh-buddy.env` before `./build.sh`; it is gitignored); `install.sh` installs it and starts the service.
 
 The app runs with invariant globalization, so no ICU package is needed. If startup reports a missing native library, install the package it names.
 
@@ -60,33 +69,52 @@ If the proxy is on another host, make Kestrel listen on that interface (`ASPNETC
 Terminate TLS with a certificate that clients trust: the Debian clients verify it normally (no `-k`).
 For an internal CA, install the CA into the clients' system store (`/usr/local/share/ca-certificates/` + `update-ca-certificates`) in the template.
 
-## 3. Migrations and the first administrator
+### Without TLS (plain HTTP)
 
-```bash
-cd /opt/ssh-buddy
-set -a; . /etc/ssh-buddy/ssh-buddy.env; set +a
-runuser -u ssh-buddy -- ./SshBuddy.Web migrate
-runuser -u ssh-buddy -- ./SshBuddy.Web admin create --email you@example.com
-systemctl daemon-reload && systemctl enable --now ssh-buddy
+On a network you trust, you can skip certificates and the reverse proxy entirely: the app listens on port 80 itself and
+the agents talk plain HTTP. In `ssh-buddy.env`:
+
+```
+ASPNETCORE_URLS=http://0.0.0.0:80
+App__PublicBaseUrl=http://keys.home.example
+AllowedHosts=keys.home.example
+Security__RequireHttps=false
 ```
 
-`ExecStartPre` re-runs `migrate` on every service start, so upgrades are: stop, replace `/opt/ssh-buddy`, start.
-Migrations are EF Core migrations (Identity tables included); the app never calls `EnsureCreated`.
-The database runs in WAL mode.
+and build the template with `http://keys.home.example` (no `--ca`). `Security__RequireHttps=false` lets the API answer plain
+HTTP, stops the redirect to HTTPS and drops the `Secure` flag from the login cookie (a browser discards a `Secure` cookie set
+over http, so login would not stick). The unit has `CAP_NET_BIND_SERVICE` so the service user can bind port 80.
+
+What you give up: anyone who can watch or redirect traffic on that network can read the admin password, session cookie and
+credentials, and can answer the agents in the server's place, which means choosing the keys every machine accepts for root.
+Each scheme is taken literally: an `https://` URL is always verified, `http://` is never upgraded or downgraded.
+
+**Moving to TLS later** (for example with certificates from step-ca): serve HTTPS (a reverse proxy, or the app itself with
+`ASPNETCORE_URLS=https://0.0.0.0:443`, `Kestrel__Certificates__Default__Path` and `__KeyPath` pointing at the certificate and key),
+rebuild the template with `https://` and `--ca root_ca.crt`, and change `url=` in `/etc/ssh-buddy/agent.conf` on existing containers
+(`pct exec <id> -- sed -i 's#^url=http://#url=https://#' /etc/ssh-buddy/agent.conf`; they also need the root CA in their trust
+store). Keep `Security__RequireHttps=false` until every container has switched, then remove it.
+
+## 3. The first administrator, upgrades
+
+```bash
+ssh-buddy admin create --email you@example.com
+```
+
+`ssh-buddy` runs the app's commands (`migrate`, `admin create`, `admin reset-password`, `version`) as the service user with
+the settings from `ssh-buddy.env`, read the way systemd reads them. (Sourcing the file with `set -a; . ssh-buddy.env` does
+**not** work: the shell cuts `ConnectionStrings__Default=Data Source=...` at the space.)
+
+`ExecStartPre` re-runs `migrate` on every service start. **Upgrade** by running `install.sh` from a newer bundle: it copies
+the database to `/var/backups/ssh-buddy` (`VACUUM INTO`), replaces `/opt/ssh-buddy`, keeps the config and data, publishes
+the new agent release, and restarts the service, which migrates. Migrations are EF Core migrations (Identity tables
+included); the app never calls `EnsureCreated`. The database runs in WAL mode.
 
 Smoke test:
 
 ```bash
 curl -i https://keys.home.example/api/authorized-keys     # 200, empty body, ETag header
-```
-
-## 3b. Publish the agent and build the template
-
-```bash
-(cd agent && ./build.sh)                                    # on a build machine; version comes from agent/VERSION
-V="$(cat agent/VERSION)"
-rsync -a "agent/dist/$V/" "root@keys-lxc:/var/lib/ssh-buddy/agent/$V/"
-curl -s https://keys.home.example/api/agent/manifest.txt   # lists linux-amd64 and linux-arm64
+curl -s https://keys.home.example/api/agent/manifest.txt  # the bundled agent: linux-amd64 and linux-arm64
 ```
 
 Then follow [template.md](template.md) to create the template credential and the LXC template.
@@ -99,8 +127,7 @@ The state is one SQLite file (keys, machines, hashed credentials, audit) plus th
 (`VACUUM INTO`, safe while the app runs) and prunes copies older than 30 days:
 
 ```bash
-install -m 0755 deploy/backup.sh /usr/local/sbin/ssh-buddy-backup
-ssh-buddy-backup /var/backups/ssh-buddy          # run from cron or a systemd timer, then copy off the container
+ssh-buddy-backup /var/backups/ssh-buddy          # installed by install.sh; run from cron or a systemd timer, then copy off the container
 ```
 
 Restore: stop the service, copy a `sshbuddy-*.db` to `/var/lib/ssh-buddy/sshbuddy.db` (delete stale `-wal`/`-shm` files),

@@ -39,8 +39,8 @@ cleanup_first
 
 # --------------------------------------------------------------------------- build
 log "build: agent release, published app, TLS material, images"
-(cd "$ROOT/agent" && ./build.sh >/dev/null) || { echo "agent build failed" >&2; exit 1; }
-VERSION="$(tr -d '[:space:]' < "$ROOT/agent/VERSION")"
+VERSION=0.0.0-dev
+(cd "$ROOT/agent" && ./build.sh "$VERSION" >/dev/null) || { echo "agent build failed" >&2; exit 1; }
 mkdir -p "$WORK/releases" "$WORK/shared" "$WORK/tls"
 cp -r "$ROOT/agent/dist/$VERSION" "$WORK/releases/$VERSION"
 dotnet publish "$ROOT/src/SshBuddy.Web" -c Release -r linux-x64 --self-contained -o "$WORK/app" >/dev/null 2>&1 || { echo "publish failed" >&2; exit 1; }

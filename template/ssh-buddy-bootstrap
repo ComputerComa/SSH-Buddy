@@ -26,8 +26,10 @@ die() { echo "ssh-buddy-bootstrap: ERROR: $*" >&2; exit 1; }
 
 [ -r "$CONF" ] || die "missing $CONF"
 BASE_URL="$(sed -n 's/^[[:space:]]*url[[:space:]]*=[[:space:]]*//p' "$CONF" | head -n1 | sed 's/[[:space:]]*$//; s#/*$##')"
-case "$BASE_URL" in https://*) ;; *) die "url in $CONF must start with https://" ;; esac
-case "$BASE_URL" in *[[:space:]]*|*\?*|*\#*|*@*) die "url in $CONF must be a plain https origin" ;; esac
+case "$BASE_URL" in https://*|http://*) ;; *) die "url in $CONF must start with https:// (or http://)" ;; esac
+case "$BASE_URL" in *[[:space:]]*|*\?*|*\#*|*@*) die "url in $CONF must be a plain origin" ;; esac
+# The scheme in agent.conf decides: https with TLS 1.2+ and a verified certificate, or plain http where the operator chose it.
+case "$BASE_URL" in https://*) PROTO=(--proto '=https' --tlsv1.2) ;; *) PROTO=(--proto '=http') ;; esac
 
 [ -s "$TOKEN_FILE" ] || die "missing enrollment credential $TOKEN_FILE"
 if [ -n "$(find "$TOKEN_FILE" -perm /077 2>/dev/null)" ]; then
@@ -45,7 +47,7 @@ work="$(mktemp -d /var/tmp/ssh-buddy-bootstrap.XXXXXX)"
 trap 'rm -rf "$work"' EXIT
 
 fetch() { # fetch URL-PATH OUTPUT [MAX-BYTES]
-  curl --fail --silent --show-error --proto '=https' --tlsv1.2 \
+  curl --fail --silent --show-error "${PROTO[@]}" \
        --connect-timeout 10 --max-time 120 --max-filesize "${3:-1048576}" \
        --output "$2" "$BASE_URL$1"
 }

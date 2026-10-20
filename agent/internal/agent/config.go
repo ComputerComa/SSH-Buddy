@@ -92,19 +92,20 @@ func LoadConfig(path string) (Config, error) {
 	return cfg, cfg.Validate()
 }
 
-// Validate checks the settings. The URL must be https: the agent never talks plain HTTP.
+// Validate checks the settings. The URL is an https origin, or an http one where the operator has chosen to run
+// SSH Buddy without TLS (docs/deployment.md); https always verifies the certificate, there is no in-between.
 func (c *Config) Validate() error {
 	u, err := url.Parse(c.BaseURL)
 	if err != nil || c.BaseURL == "" {
 		return errors.New("url is required (for example url=https://keys.example.com)")
 	}
-	if u.Scheme != "https" || u.Host == "" {
-		return errors.New("url must be an https:// address")
+	if (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		return errors.New("url must be an https:// (or http://) address")
 	}
 	if u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
 		return errors.New("url must be just the origin, such as https://keys.example.com")
 	}
-	c.BaseURL = "https://" + u.Host
+	c.BaseURL = u.Scheme + "://" + u.Host
 	if c.Interval < MinInterval || c.Interval > MaxInterval {
 		return fmt.Errorf("interval must be between %s and %s", MinInterval, MaxInterval)
 	}

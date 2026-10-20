@@ -27,11 +27,17 @@ func TestLoadConfig(t *testing.T) {
 	if err != nil || d.Interval != DefaultInterval {
 		t.Errorf("default interval = %v, %v", d.Interval, err)
 	}
+	h, err := LoadConfig(writeConf(t, "url=HTTP://keys.example.com:8080/\n"))
+	if err != nil || h.BaseURL != "http://keys.example.com:8080" {
+		t.Errorf("plain http origin = %q, %v", h.BaseURL, err)
+	}
 }
 
 func TestLoadConfigRejectsBadInput(t *testing.T) {
 	for name, content := range map[string]string{
-		"http":           "url=http://keys.example.com\n",
+		"other scheme":   "url=ftp://keys.example.com\n",
+		"no scheme":      "url=keys.example.com\n",
+		"http with path": "url=http://keys.example.com/api\n",
 		"no url":         "interval=5m\n",
 		"url with path":  "url=https://keys.example.com/api\n",
 		"userinfo":       "url=https://u:p@keys.example.com\n",

@@ -35,6 +35,46 @@ rm -f /etc/ssh/ssh_host_*                 # the bootstrap runs `ssh-keygen -A`; 
 The credential is read from **stdin**, never from the command line, so it stays out of `ps` and shell history.
 Shut the container down and convert it to a template (Proxmox: *More → Convert to template*).
 
+## Build the template with DAB (Proxmox)
+
+With the [Debian Appliance Builder](https://pve.proxmox.com/wiki/Debian_Appliance_Builder), install the bootstrap into the
+rootfs **from the Proxmox host**, after `dab install` and before `dab finalize`. `--root` writes the files into the rootfs,
+enables the unit with `systemctl --root`, and runs `update-ca-certificates` in a chroot when you pass `--ca`; nothing runs in
+DAB's build container.
+
+Keep next to your `dab.conf` (neither belongs in git):
+
+* `ssh-buddy-enroll-token`: the template credential from the UI, `chmod 600`;
+* your CA certificate, only if SSH Buddy's certificate is not publicly trusted.
+
+Add to the `Makefile` (DAB's example Makefile already defines `BASEDIR`):
+
+```make
+BASEDIR := $(shell dab basedir)
+SSH_BUDDY_URL := https://keys.home.example
+
+ssh-buddy-template.tar.gz:
+	curl -fsSLO https://github.com/ComputerComa/SSH-Buddy/releases/latest/download/ssh-buddy-template.tar.gz
+	curl -fsSL https://github.com/ComputerComa/SSH-Buddy/releases/latest/download/SHA256SUMS | sha256sum -c --ignore-missing
+
+all: info/init_ok ssh-buddy-template.tar.gz
+	dab bootstrap
+	dab install curl ca-certificates openssh-server
+	# ... your other packages and files ...
+	rm -rf ssh-buddy-template && tar xzf ssh-buddy-template.tar.gz
+	ssh-buddy-template/install-into-template.sh --root $(BASEDIR) $(SSH_BUDDY_URL) --ca ca.crt < ssh-buddy-enroll-token
+	dab finalize
+```
+
+Leave out `--ca ca.crt` for a publicly trusted certificate, and use an `http://` URL without `--ca` if you run SSH Buddy without TLS
+([deployment.md](deployment.md#without-tls-plain-http)). Delete `ssh-buddy-template.tar.gz` to pick up a newer release on the next build.
+
+No hygiene step is needed: a DAB rootfs never held a machine's SSH Buddy state, and `pct create` gives each new container its own
+SSH host keys and `/etc/machine-id`. Create machines from the template (`pct create`); a `pct clone` of a container that has
+already bootstrapped copies its machine credential, so clone only from a template. Give each container a unique hostname and a
+DNS domain (`pct create … --hostname web1`, plus the search domain), because it enrolls under its FQDN; set `fqdn=` in
+`agent.conf` only if that cannot be derived.
+
 ## What happens on a clone's first boot
 
 `ssh-buddy-bootstrap.service` (`After=network-online.target`, skipped if `/var/lib/ssh-buddy-agent/bootstrap-complete` exists). It is `Type=exec`,

@@ -299,6 +299,35 @@ public sealed class HttpsEnforcementTests
     }
 
     [Fact]
+    public async Task Plain_http_works_in_production_when_https_is_switched_off()
+    {
+        using var f = await new AppFactory(new() { ["Security:RequireHttps"] = "false" }, environment: "Production").InitializeAsync();
+        using var http = f.CreateNoRedirectClient();
+        Assert.Equal(HttpStatusCode.OK, (await http.GetAsync("/api/authorized-keys")).StatusCode);
+        // reaches the handler (no token) instead of being refused with 403
+        Assert.Equal(HttpStatusCode.Unauthorized, (await http.PostAsync("/api/keys/enroll", new FormUrlEncodedContent([]))).StatusCode);
+
+        var page = await http.GetAsync("/login");
+        Assert.Equal(HttpStatusCode.OK, page.StatusCode);
+        var html = await page.Content.ReadAsStringAsync();
+        var token = Regex.Match(html, "name=\"__RequestVerificationToken\"[^>]*value=\"([^\"]+)\"").Groups[1].Value;
+        var antiforgery = page.Headers.GetValues("Set-Cookie").First(x => x.Contains(".AspNetCore.Antiforgery")).Split(';')[0];
+        var req = new HttpRequestMessage(HttpMethod.Post, "/account/login")
+        {
+            Content = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["Email"] = AppFactory.AdminEmail, ["Password"] = AppFactory.AdminPassword, ["__RequestVerificationToken"] = token,
+            }),
+        };
+        req.Headers.Add("Cookie", antiforgery);
+        var res = await http.SendAsync(req);
+        // A Secure cookie set over http would be dropped by the browser, so login would silently not stick.
+        var cookie = res.Headers.GetValues("Set-Cookie").Single(x => x.StartsWith("SshBuddy.Auth"));
+        Assert.DoesNotContain("secure", cookie, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("httponly", cookie, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task Ui_over_plain_http_redirects_to_https_when_required()
     {
         using var f = await new AppFactory(new() { ["Security:RequireHttps"] = "true" }).InitializeAsync();

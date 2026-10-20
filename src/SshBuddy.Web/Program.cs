@@ -11,7 +11,7 @@ if (Cli.IsCommand(args))
 
 var builder = WebApplication.CreateBuilder(args);
 var config = builder.Configuration;
-var requireHttps = config.GetValue("Security:RequireHttps", !builder.Environment.IsDevelopment());
+var requireHttps = AppServices.RequireHttps(config, builder.Environment);
 
 builder.Services.AddSshBuddyCore(config, builder.Environment);
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();

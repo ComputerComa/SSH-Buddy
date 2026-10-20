@@ -336,10 +336,12 @@ func TestCertificateVerificationIsNeverDisabled(t *testing.T) {
 	}
 }
 
-func TestPlainHTTPConfigIsRejected(t *testing.T) {
-	c := Config{BaseURL: "http://keys.example.com", Interval: DefaultInterval}
-	if err := c.Validate(); err == nil {
-		t.Fatal("http:// accepted")
+func TestSchemeComesOnlyFromTheConfig(t *testing.T) {
+	for _, u := range []string{"https://keys.example.com", "http://keys.example.com"} {
+		c := Config{BaseURL: u + "/", Interval: DefaultInterval}
+		if err := c.Validate(); err != nil || c.BaseURL != u {
+			t.Errorf("%s -> %q, %v", u, c.BaseURL, err)
+		}
 	}
 }
 

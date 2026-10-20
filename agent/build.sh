@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build the static ssh-buddy-agent binaries for Linux amd64 and arm64 into dist/<version>/.
-# Usage: ./build.sh [version]        (default: contents of ./VERSION)
+# Usage: ./build.sh [version]        (default 0.0.0-dev; releases get the version from the git tag, see ../build.sh)
 #
 # The output directory is exactly what SSH Buddy serves: copy dist/<version>/ into the server's
 # Agent:ReleaseDirectory (see docs/agent-release.md). Builds are reproducible: same source, same Go
@@ -14,7 +14,7 @@ export GOTOOLCHAIN="${GOTOOLCHAIN:-auto}"
 
 verify=0
 if [ "${1:-}" = "--verify" ]; then verify=1; shift; fi
-version="${1:-$(tr -d '[:space:]' < VERSION)}"
+version="${1:-0.0.0-dev}"
 case "$version" in
   [0-9]*.[0-9]*.[0-9]*) ;;
   *) echo "version must look like 1.2.3 or 1.2.3-rc1, got '$version'" >&2; exit 2 ;;

@@ -8,6 +8,13 @@ namespace SshBuddy.Web.Services;
 
 public static class AppServices
 {
+    /// <summary>
+    /// <c>Security:RequireHttps</c> (default: on outside Development). Off is for operators who run SSH Buddy over plain
+    /// HTTP on purpose: the API then answers http, the UI is not redirected and the login cookie is not marked Secure.
+    /// </summary>
+    public static bool RequireHttps(IConfiguration config, IHostEnvironment env) =>
+        config.GetValue("Security:RequireHttps", !env.IsDevelopment());
+
     public static IServiceCollection AddSshBuddyCore(this IServiceCollection services, IConfiguration config, IWebHostEnvironment env)
     {
         var connectionString = config.GetConnectionString("Default") ?? "Data Source=App_Data/sshbuddy.db";
@@ -40,7 +47,7 @@ public static class AppServices
             o.Cookie.Name = "SshBuddy.Auth";
             o.Cookie.HttpOnly = true;
             o.Cookie.SameSite = SameSiteMode.Lax;
-            o.Cookie.SecurePolicy = env.IsDevelopment() ? CookieSecurePolicy.SameAsRequest : CookieSecurePolicy.Always;
+            o.Cookie.SecurePolicy = RequireHttps(config, env) ? CookieSecurePolicy.Always : CookieSecurePolicy.SameAsRequest;
             o.ExpireTimeSpan = TimeSpan.FromHours(8);
             o.SlidingExpiration = true;
         });
